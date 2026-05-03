@@ -37,7 +37,7 @@ export default function Checkout() {
     rut: '',
   });
 
-  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'mercadopago'>('stripe');
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'mercadopago'>('mercadopago');
 
   const [cardData, setCardData] = useState({
     cardNumber: '',
@@ -307,11 +307,10 @@ export default function Checkout() {
                         value={country}
                         onChange={(e) => {
                           setCountry(e.target.value);
-                          setFormData({...formData, country: e.target.value === 'CL' ? 'Chile' : 'Estados Unidos'});
+                          setFormData({...formData, country: 'Chile'});
                         }}
                       >
                         <option value="CL">🇨🇱 Chile</option>
-                        <option value="US">🇺🇸 Estados Unidos</option>
                       </select>
                     </div>
                   </div>
@@ -336,99 +335,23 @@ export default function Checkout() {
                 <h2>Método de Pago</h2>
                 
                 <div className="payment-methods">
-                  <label className={`payment-option ${paymentMethod === 'stripe' ? 'selected' : ''}`}>
+                  <label className={`payment-option ${paymentMethod === 'mercadopago' ? 'selected' : ''}`}>
                     <input
                       type="radio"
                       name="paymentMethod"
-                      value="stripe"
-                      checked={paymentMethod === 'stripe'}
-                      onChange={() => setPaymentMethod('stripe')}
+                      value="mercadopago"
+                      checked={paymentMethod === 'mercadopago'}
+                      onChange={() => setPaymentMethod('mercadopago')}
                     />
                     <div className="payment-content">
-                      <span className="payment-icon">💳</span>
+                      <span className="payment-icon">🛒</span>
                       <div>
-                        <strong>Tarjeta de Crédito/Débito</strong>
-                        <span className="payment-desc">Visa, Mastercard, American Express</span>
-                      </div>
-                    </div>
-                  </label>
-
-                  {country === 'CL' && (
-                    <label className={`payment-option ${paymentMethod === 'mercadopago' ? 'selected' : ''}`}>
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value="mercadopago"
-                        checked={paymentMethod === 'mercadopago'}
-                        onChange={() => setPaymentMethod('mercadopago')}
-                      />
-                      <div className="payment-content">
-                        <span className="payment-icon">🛒</span>
-                        <div>
-                          <strong>Mercado Libre</strong>
-                          <span className="payment-desc">Paga con tarjetas, transferencia o Mercado Pago</span>
+                        <strong>Mercado Libre</strong>
+                        <span className="payment-desc">Paga con tarjetas, transferencia o Mercado Pago</span>
                         </div>
                       </div>
                     </label>
-                  )}
                 </div>
-
-                {paymentMethod === 'stripe' && (
-                  <div className="card-form">
-                    <div className="form-group">
-                      <label>Nombre en la tarjeta</label>
-                      <input
-                        type="text"
-                        className="input"
-                        required
-                        placeholder="Como aparece en la tarjeta"
-                        value={cardData.name}
-                        onChange={(e) => setCardData({...cardData, name: e.target.value})}
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Número de tarjeta</label>
-                      <input
-                        type="text"
-                        className="input"
-                        required
-                        placeholder="1234 5678 9012 3456"
-                        maxLength={19}
-                        value={cardData.cardNumber}
-                        onChange={(e) => setCardData({...cardData, cardNumber: e.target.value})}
-                      />
-                    </div>
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label>Fecha de expiración</label>
-                        <input
-                          type="text"
-                          className="input"
-                          required
-                          placeholder="MM/AA"
-                          maxLength={5}
-                          value={cardData.expiry}
-                          onChange={(e) => setCardData({...cardData, expiry: e.target.value})}
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label>CVC</label>
-                        <input
-                          type="text"
-                          className="input"
-                          required
-                          placeholder="123"
-                          maxLength={4}
-                          value={cardData.cvc}
-                          onChange={(e) => setCardData({...cardData, cvc: e.target.value})}
-                        />
-                      </div>
-                    </div>
-                    <div className="secure-badge">
-                      🔒 Pago seguro con encriptación SSL
-                    </div>
-                  </div>
-                )}
 
                 {paymentMethod === 'mercadopago' && (
                   <div className="mercadopago-info">
