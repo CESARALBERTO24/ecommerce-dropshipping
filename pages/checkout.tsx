@@ -37,7 +37,7 @@ export default function Checkout() {
     rut: '',
   });
 
-  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'webpay'>('stripe');
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'mercadopago'>('stripe');
 
   const [cardData, setCardData] = useState({
     cardNumber: '',
@@ -133,17 +133,17 @@ export default function Checkout() {
           total: finalTotal,
           shipping_address: shippingAddress,
           payment_status: paymentIntentId ? 'paid' : 'pending',
-          payment_method: paymentMethod === 'webpay' ? 'webpay' : 'card',
+          payment_method: paymentMethod === 'mercadopago' ? 'mercadopago' : 'card',
         })
         .select()
         .single();
 
       if (error) throw error;
 
-      // Si es WebPay, aquí redirigirías a WebPay
-      if (paymentMethod === 'webpay') {
-        // En producción, integrarías con WebPay/Transbank
-        alert('Serás redirigido a WebPay para completar el pago');
+      // Si es Mercado Libre, aquí redirigirías a Mercado Pago
+      if (paymentMethod === 'mercadopago') {
+        // En producción, integrarías con Mercado Pago
+        alert('Serás redirigido a Mercado Libre para completar el pago');
       }
 
       clearCart();
@@ -354,19 +354,19 @@ export default function Checkout() {
                   </label>
 
                   {country === 'CL' && (
-                    <label className={`payment-option ${paymentMethod === 'webpay' ? 'selected' : ''}`}>
+                    <label className={`payment-option ${paymentMethod === 'mercadopago' ? 'selected' : ''}`}>
                       <input
                         type="radio"
                         name="paymentMethod"
-                        value="webpay"
-                        checked={paymentMethod === 'webpay'}
-                        onChange={() => setPaymentMethod('webpay')}
+                        value="mercadopago"
+                        checked={paymentMethod === 'mercadopago'}
+                        onChange={() => setPaymentMethod('mercadopago')}
                       />
                       <div className="payment-content">
-                        <span className="payment-icon">🏦</span>
+                        <span className="payment-icon">🛒</span>
                         <div>
-                          <strong>WebPay</strong>
-                          <span className="payment-desc">Paga con tu banco de forma segura</span>
+                          <strong>Mercado Libre</strong>
+                          <span className="payment-desc">Paga con tarjetas, transferencia o Mercado Pago</span>
                         </div>
                       </div>
                     </label>
@@ -430,14 +430,17 @@ export default function Checkout() {
                   </div>
                 )}
 
-                {paymentMethod === 'webpay' && (
-                  <div className="webpay-info">
-                    <p>Serás redirigido a WebPay para completar tu pago de forma segura con tu banco.</p>
-                    <div className="webpay-banks">
-                      <span>🏦 Banco de Chile</span>
-                      <span>🏦 Scotiabank</span>
-                      <span>🏦 Banco Estado</span>
-                      <span>🏦 BCI</span>
+                {paymentMethod === 'mercadopago' && (
+                  <div className="mercadopago-info">
+                    <p>Serás redirigido a Mercado Libre para completar tu pago de forma segura.</p>
+                    <div className="mercadopago-methods">
+                      <span>💳 Tarjeta de crédito</span>
+                      <span>💳 Tarjeta de débito</span>
+                      <span>🏦 Transferencia bancaria</span>
+                      <span>📱 Mercado Pago</span>
+                    </div>
+                    <div className="mercadopago-badge">
+                      <img src="https://http2.mlstatic.com/frontend-assets/v1.0.4/mercadopago/logo-horizontal-lg.png" alt="Mercado Libre" />
                     </div>
                   </div>
                 )}
@@ -515,6 +518,12 @@ export default function Checkout() {
         .webpay-info { text-align: center; padding: 2rem; background: #f0f9ff; border-radius: 8px; }
         .webpay-banks { display: flex; justify-content: center; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; }
         .webpay-banks span { font-size: 0.875rem; color: var(--text-muted); }
+
+        .mercadopago-info { text-align: center; padding: 2rem; background: #fff9e6; border-radius: 8px; border: 2px solid #ffe600; }
+        .mercadopago-methods { display: flex; justify-content: center; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; }
+        .mercadopago-methods span { font-size: 0.875rem; color: var(--text-muted); }
+        .mercadopago-badge { margin-top: 1.5rem; }
+        .mercadopago-badge img { height: 30px; }
 
         .form-actions { display: flex; gap: 1rem; margin-top: 2rem; }
         .form-actions .btn-block { flex: 1; padding: 1rem; font-size: 1rem; }
