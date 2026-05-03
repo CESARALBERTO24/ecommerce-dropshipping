@@ -2,37 +2,37 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Products table (if not exists)
-CREATE TABLE IF NOT EXISTS products (
+-- Supabase Auth: Los usuarios se gestionan automáticamente en auth.users
+
+-- Clients table ( customers para pedidos )
+-- Los clientes se crean automáticamente en el callback de OAuth
+CREATE TABLE IF NOT EXISTS clients (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    external_id TEXT,
-    supplier_id UUID REFERENCES suppliers(id),
-    name TEXT NOT NULL,
-    description TEXT,
-    price NUMERIC(10, 2) NOT NULL,
-    cost_price NUMERIC(10, 2),
-    images JSONB DEFAULT '[]',
-    category TEXT,
-    is_active BOOLEAN DEFAULT true,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT,
+    phone TEXT,
+    addresses JSONB DEFAULT '[]',
+    auth_id TEXT UNIQUE,
+    provider TEXT DEFAULT 'email',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Enable RLS on products
-ALTER TABLE products ENABLE ROW LEVEL SECURITY;
+-- Enable RLS on clients
+ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
 
--- Product policies
-CREATE POLICY "products_public_read" ON products FOR SELECT USING (is_active = true);
-CREATE POLICY "products_supplier_manage" ON products FOR ALL USING (
-    auth.role() = 'authenticated' AND 
-    EXISTS (SELECT 1 FROM suppliers WHERE id = products.supplier_id AND auth.uid()::text = id::text)
+-- Client policies
+CREATE POLICY "clients_own_read" ON clients FOR SELECT USING (
+    auth.uid()::text = auth_id OR auth.role() = 'authenticated'
 );
 
--- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_products_supplier ON products(supplier_id);
-CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);
-CREATE INDEX IF NOT EXISTS idx_products_active ON products(is_active);
-CREATE INDEX IF NOT EXISTS idx_products_external_id ON products(external_id);
+CREATE POLICY "clients_insert" ON clients FOR INSERT WITH CHECK (
+    auth.uid()::text = auth_id OR auth.role() = 'authenticated'
+);
+
+CREATE POLICY "clients_update" ON clients FOR UPDATE USING (
+    auth.uid()::text = auth_id OR auth.role() = 'authenticated'
+);
 
 -- Function to auto-update updated_at
 CREATE OR REPLACE FUNCTION update_updated_at()
@@ -43,38 +43,92 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Triggers for updated_at
-CREATE TRIGGER update_products_updated_at
-    BEFORE UPDATE ON products
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-CREATE TRIGGER update_suppliers_updated_at
-    BEFORE UPDATE ON suppliers
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
+-- Trigger for clients
 CREATE TRIGGER update_clients_updated_at
     BEFORE UPDATE ON clients
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+    FOR EACH ROW EXecute FUNCTION update_updated_at();
 
+-- Tabla de pedidos (se sincroniza con Cloudflare D1)
+-- Los pedidos se crean en el checkout y se guardan tanto en Supabase como en Cloudflare D1
+CREATE TABLE IF NOT EXISTS orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_number TEXT UNIQUE NOT NULL,
+    client_id UUID REFERENCES clients(id),
+    supplier_id TEXT,
+    status TEXT DEFAULT 'pending',
+    items JSONB NOT NULL,
+    subtotal NUMERIC(10, 2) NOT NULL,
+    shipping_cost NUMERIC(10, 2) DEFAULT 0,
+    total NUMERIC(10, 2) NOT NULL,
+    shipping_address JSONB,
+    billing_address JSONB,
+    payment_status TEXT DEFAULT 'pending',
+    payment_method TEXT,
+    tracking_number TEXT,
+    supplier_order_id TEXT,
+    supplier_status TEXT,
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS on orders
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+
+-- Order policies
+CREATE POLICY "orders_own_read" ON orders FOR SELECT USING (
+    auth.uid()::text = client_id::text OR auth.role() = 'authenticated'
+);
+
+CREATE POLICY "orders_insert" ON orders FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "orders_update" ON orders FOR UPDATE USING (
+    auth.uid()::text = client_id::text OR auth.role() = 'authenticated'
+);
+
+-- Trigger for orders
 CREATE TRIGGER update_orders_updated_at
     BEFORE UPDATE ON orders
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
--- Insert sample products for testing
-INSERT INTO products (name, description, price, supplier_id, category, images, is_active)
-SELECT 
-    p.name,
-    p.description,
-    p.price,
-    s.id,
-    p.category,
-    p.images::jsonb,
-    true
-FROM (
-    VALUES
-    ('Producto de Ejemplo 1', 'Descripción del producto 1', 29.99, 'electronics', '["https://placehold.co/400x400"]'),
-    ('Producto de Ejemplo 2', 'Descripción del producto 2', 49.99, 'clothing', '["https://placehold.co/400x400"]'),
-    ('Producto de Ejemplo 3', 'Descripción del producto 3', 19.99, 'home', '["https://placehold.co/400x400"]')
-) AS p(name, description, price, category, images)
-CROSS JOIN (SELECT id FROM suppliers WHERE slug = 'aliexpress' LIMIT 1) AS s
-ON CONFLICT DO NOTHING;
+-- Tabla de proveedores (solo para referencia, los productos están en Cloudflare D1)
+CREATE TABLE IF NOT EXISTS suppliers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    api_key TEXT,
+    api_secret TEXT,
+    webhook_url TEXT,
+    commission_percent NUMERIC(5, 2) DEFAULT 0,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Enable RLS on suppliers
+ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
+
+-- Supplier policies
+CREATE POLICY "suppliers_public_read" ON suppliers FOR SELECT USING (is_active = true);
+
+-- Insert default suppliers (coincide con Cloudflare D1)
+INSERT INTO suppliers (id, name, slug, commission_percent, is_active) VALUES
+    ('supplier-001', 'AliExpress', 'aliexpress', 10, true),
+    ('supplier-002', 'CJDropshipping', 'cjdropshipping', 15, true),
+    ('supplier-003', 'GlobalDropshipping', 'globaldropshipping', 12, true)
+ON CONFLICT (id) DO NOTHING;
+
+-- Función para generar número de pedido
+CREATE OR REPLACE FUNCTION generate_order_number()
+RETURNS TRIGGER AS $$
+DECLARE order_count INTEGER;
+BEGIN
+    SELECT COUNT(*) + 1 INTO order_count FROM orders;
+    NEW.order_number := 'ORD-' || TO_CHAR(NOW(), 'YYYYMMDD') || '-' || LPAD(order_count::TEXT, 6, '0');
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger para auto-generar order_number
+CREATE TRIGGER set_order_number
+    BEFORE INSERT ON orders
+    FOR EACH ROW EXECUTE FUNCTION generate_order_number();
