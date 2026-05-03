@@ -6,6 +6,7 @@ export interface Env {
   ALIEXPRESS_API_SECRET: string;
   CJ_DROPSHIPPING_API_KEY: string;
   GLOBAL_DROPSHIPPING_API_KEY: string;
+  STRIPE_SECRET_KEY: string;
 }
 
 interface Product {
@@ -89,6 +90,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       return await handleDropshipCreateOrder(request, env);
     } else if (path.startsWith('/api/dropship/webhook')) {
       return await handleDropshipWebhook(request, env);
+    } else if (path.startsWith('/api/payment/create-intent')) {
+      return await handleCreatePaymentIntent(request, env);
     } else if (path === '/api/health') {
       return new Response(JSON.stringify({ status: 'ok', timestamp: new Date().toISOString() }), {
         headers: { ...corsHeaders(), 'Content-Type': 'application/json' },
@@ -528,6 +531,56 @@ async function handleDropshipWebhook(request: Request, env: Env): Promise<Respon
   }
 
   return new Response(JSON.stringify({ success: true, message: 'Webhook processed' }), { headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+}
+
+// ============ STRIPE PAYMENT ============
+
+async function handleCreatePaymentIntent(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405, headers: corsHeaders() });
+  }
+
+  if (!env.STRIPE_SECRET_KEY) {
+    return new Response(JSON.stringify({ error: 'Stripe not configured' }), { status: 500, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+  }
+
+  const body = await request.json();
+  const { amount, currency = 'usd', order_id, email } = body;
+
+  if (!amount) {
+    return new Response(JSON.stringify({ error: 'amount is required' }), { status: 400, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+  }
+
+  try {
+    const stripeResponse = await fetch('https://api.stripe.com/v1/payment_intents', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        amount: String(Math.round(amount * 100)),
+        currency,
+        'metadata[order_id]': order_id || '',
+        'metadata[email]': email || '',
+      }),
+    });
+
+    const paymentIntent = await stripeResponse.json();
+
+    if (paymentIntent.error) {
+      return new Response(JSON.stringify({ error: paymentIntent.error.message }), { status: 400, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+    }
+
+    return new Response(JSON.stringify({
+      client_secret: paymentIntent.client_secret,
+      payment_intent_id: paymentIntent.id,
+    }), { headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+
+  } catch (error) {
+    console.error('Stripe error:', error);
+    return new Response(JSON.stringify({ error: 'Failed to create payment intent' }), { status: 500, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+  }
 }
 
 export default {
