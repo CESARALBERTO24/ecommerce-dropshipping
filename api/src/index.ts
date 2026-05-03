@@ -551,6 +551,10 @@ async function handleCreatePaymentIntent(request: Request, env: Env): Promise<Re
     return new Response(JSON.stringify({ error: 'amount is required' }), { status: 400, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
   }
 
+  // CLP no usa centavos, otras monedas sí
+  const finalCurrency = currency.toLowerCase();
+  const stripeAmount = finalCurrency === 'clp' ? Math.round(amount) : Math.round(amount * 100);
+
   try {
     const stripeResponse = await fetch('https://api.stripe.com/v1/payment_intents', {
       method: 'POST',
@@ -559,8 +563,8 @@ async function handleCreatePaymentIntent(request: Request, env: Env): Promise<Re
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
-        amount: String(Math.round(amount * 100)),
-        currency,
+        amount: String(stripeAmount),
+        currency: finalCurrency,
         'metadata[order_id]': order_id || '',
         'metadata[email]': email || '',
       }),

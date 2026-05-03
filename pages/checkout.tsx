@@ -6,14 +6,24 @@ import { getUser } from '@/lib/auth';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://ecommerce-dropshipping-api.cesarlopez24.workers.dev';
 
+interface CountryConfig {
+  currency: string;
+  currencySymbol: string;
+  locale: string;
+}
+
+const COUNTRIES: Record<string, CountryConfig> = {
+  CL: { currency: 'CLP', currencySymbol: '$', locale: 'es-CL' },
+  US: { currency: 'USD', currencySymbol: '$', locale: 'en-US' },
+};
+
 export default function Checkout() {
   const router = useRouter();
   const { items, total, clearCart } = useCart();
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [step, setStep] = useState<'info' | 'payment' | 'success'>('info');
-  const [cardComplete, setCardComplete] = useState(false);
-  const [processingPayment, setProcessingPayment] = useState(false);
+  const [country, setCountry] = useState('CL');
   
   const [formData, setFormData] = useState({
     name: '',
@@ -22,10 +32,14 @@ export default function Checkout() {
     address: '',
     city: '',
     postalCode: '',
-    country: '',
+    country: 'Chile',
+    region: '',
+    rut: '',
   });
 
-  const [paymentData, setPaymentData] = useState({
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'webpay'>('stripe');
+
+  const [cardData, setCardData] = useState({
     cardNumber: '',
     expiry: '',
     cvc: '',
@@ -45,8 +59,16 @@ export default function Checkout() {
     return null;
   }
 
-  const shippingCost = total >= 50 ? 0 : 5;
+  const countryConfig = COUNTRIES[country] || COUNTRIES.CL;
+  const shippingCost = total >= 25000 ? 0 : 3000; // Envío gratis sobre 25000 CLP
   const finalTotal = total + shippingCost;
+
+  const formatPrice = (price: number) => {
+    return new Intl.NumberFormat(countryConfig.locale, {
+      style: 'currency',
+      currency: countryConfig.currency,
+    }).format(price);
+  };
 
   const handleInfoSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,7 +77,7 @@ export default function Checkout() {
 
   const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setProcessingPayment(true);
+    setLoading(true);
 
     try {
       const user = await getUser();
@@ -66,7 +88,9 @@ export default function Checkout() {
         city: formData.city,
         postalCode: formData.postalCode,
         country: formData.country,
+        region: formData.region,
         phone: formData.phone,
+        rut: formData.rut,
       };
 
       const orderItems = items.map(item => ({
@@ -77,7 +101,7 @@ export default function Checkout() {
         image: item.product.images?.[0],
       }));
 
-      // Intentar crear PaymentIntent con Stripe
+      // Crear PaymentIntent con la moneda correcta
       let paymentIntentId = null;
       try {
         const intentRes = await fetch(`${API_URL}/api/payment/create-intent`, {
@@ -85,7 +109,7 @@ export default function Checkout() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             amount: finalTotal,
-            currency: 'usd',
+            currency: countryConfig.currency.toLowerCase(),
             email: formData.email,
           }),
         });
@@ -94,7 +118,7 @@ export default function Checkout() {
           paymentIntentId = intentData.payment_intent_id;
         }
       } catch (stripeError) {
-        console.log('Stripe no configurado, creando pedido sin pago');
+        console.log('Stripe no configurado completamente');
       }
 
       const { data: order, error } = await supabase
@@ -109,12 +133,18 @@ export default function Checkout() {
           total: finalTotal,
           shipping_address: shippingAddress,
           payment_status: paymentIntentId ? 'paid' : 'pending',
-          payment_method: 'card',
+          payment_method: paymentMethod === 'webpay' ? 'webpay' : 'card',
         })
         .select()
         .single();
 
       if (error) throw error;
+
+      // Si es WebPay, aquí redirigirías a WebPay
+      if (paymentMethod === 'webpay') {
+        // En producción, integrarías con WebPay/Transbank
+        alert('Serás redirigido a WebPay para completar el pago');
+      }
 
       clearCart();
       setStep('success');
@@ -126,7 +156,7 @@ export default function Checkout() {
       console.error('Error creating order:', error);
       alert('Error al crear el pedido. Por favor intenta de nuevo.');
     } finally {
-      setProcessingPayment(false);
+      setLoading(false);
     }
   };
 
@@ -157,10 +187,7 @@ export default function Checkout() {
             font-size: 40px;
             margin: 0 auto 2rem;
           }
-          .success-message h1 {
-            margin-bottom: 1rem;
-            color: #22c55e;
-          }
+          .success-message h1 { margin-bottom: 1rem; color: #22c55e; }
         `}</style>
       </div>
     );
@@ -174,148 +201,246 @@ export default function Checkout() {
         <div className="checkout-layout">
           <form onSubmit={step === 'info' ? handleInfoSubmit : handlePaymentSubmit} className="checkout-form">
             {step === 'info' && (
-              <div className="form-section">
-                <h2>Información de Contacto</h2>
-                <div className="form-group">
-                  <label>Nombre completo</label>
-                  <input
-                    type="text"
-                    className="input"
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  />
+              <>
+                <div className="form-section">
+                  <h2>Información de Contacto</h2>
+                  <div className="form-group">
+                    <label>Nombre completo</label>
+                    <input
+                      type="text"
+                      className="input"
+                      required
+                      value={formData.name}
+                      onChange={(e) => setFormData({...formData, name: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Email</label>
+                    <input
+                      type="email"
+                      className="input"
+                      required
+                      value={formData.email}
+                      onChange={(e) => setFormData({...formData, email: e.target.value})}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Teléfono</label>
+                    <input
+                      type="tel"
+                      className="input"
+                      required
+                      placeholder="+56 9 XXXX XXXX"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                    />
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label>Email</label>
-                  <input
-                    type="email"
-                    className="input"
-                    required
-                    value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Teléfono</label>
-                  <input
-                    type="tel"
-                    className="input"
-                    required
-                    value={formData.phone}
-                    onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                  />
-                </div>
-              </div>
-            )}
 
-            {step === 'info' && (
-              <div className="form-section">
-                <h2>Dirección de Envío</h2>
-                <div className="form-group">
-                  <label>Dirección</label>
-                  <input
-                    type="text"
-                    className="input"
-                    required
-                    value={formData.address}
-                    onChange={(e) => setFormData({...formData, address: e.target.value})}
-                  />
-                </div>
-                <div className="form-row">
+                <div className="form-section">
+                  <h2>Dirección de Envío</h2>
                   <div className="form-group">
-                    <label>Ciudad</label>
+                    <label>Dirección</label>
                     <input
                       type="text"
                       className="input"
                       required
-                      value={formData.city}
-                      onChange={(e) => setFormData({...formData, city: e.target.value})}
+                      placeholder="Calle y número"
+                      value={formData.address}
+                      onChange={(e) => setFormData({...formData, address: e.target.value})}
                     />
                   </div>
-                  <div className="form-group">
-                    <label>Código Postal</label>
-                    <input
-                      type="text"
-                      className="input"
-                      required
-                      value={formData.postalCode}
-                      onChange={(e) => setFormData({...formData, postalCode: e.target.value})}
-                    />
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Ciudad</label>
+                      <input
+                        type="text"
+                        className="input"
+                        required
+                        value={formData.city}
+                        onChange={(e) => setFormData({...formData, city: e.target.value})}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Comuna</label>
+                      <input
+                        type="text"
+                        className="input"
+                        required
+                        value={formData.postalCode}
+                        onChange={(e) => setFormData({...formData, postalCode: e.target.value})}
+                      />
+                    </div>
                   </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Región</label>
+                      <select 
+                        className="input"
+                        value={formData.region}
+                        onChange={(e) => setFormData({...formData, region: e.target.value})}
+                        required
+                      >
+                        <option value="">Selecciona región</option>
+                        <option value="Arica y Parinacota">Arica y Parinacota</option>
+                        <option value="Tarapacá">Tarapacá</option>
+                        <option value="Antofagasta">Antofagasta</option>
+                        <option value="Atacama">Atacama</option>
+                        <option value="Coquimbo">Coquimbo</option>
+                        <option value="Valparaíso">Valparaíso</option>
+                        <option value="Metropolitana">Metropolitana</option>
+                        <option value="O'Higgins">O'Higgins</option>
+                        <option value="Maule">Maule</option>
+                        <option value="Ñuble">Ñuble</option>
+                        <option value="Biobío">Biobío</option>
+                        <option value="La Araucanía">La Araucanía</option>
+                        <option value="Los Ríos">Los Ríos</option>
+                        <option value="Los Lagos">Los Lagos</option>
+                        <option value="Aysén">Aysén</option>
+                        <option value="Magallanes">Magallanes</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label>País</label>
+                      <select 
+                        className="input"
+                        value={country}
+                        onChange={(e) => {
+                          setCountry(e.target.value);
+                          setFormData({...formData, country: e.target.value === 'CL' ? 'Chile' : 'Estados Unidos'});
+                        }}
+                      >
+                        <option value="CL">🇨🇱 Chile</option>
+                        <option value="US">🇺🇸 Estados Unidos</option>
+                      </select>
+                    </div>
+                  </div>
+                  {country === 'CL' && (
+                    <div className="form-group">
+                      <label>RUT (opcional para factura)</label>
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="XX.XXX.XXX-X"
+                        value={formData.rut}
+                        onChange={(e) => setFormData({...formData, rut: e.target.value})}
+                      />
+                    </div>
+                  )}
                 </div>
-                <div className="form-group">
-                  <label>País</label>
-                  <input
-                    type="text"
-                    className="input"
-                    required
-                    value={formData.country}
-                    onChange={(e) => setFormData({...formData, country: e.target.value})}
-                  />
-                </div>
-              </div>
+              </>
             )}
 
             {step === 'payment' && (
               <div className="form-section">
-                <h2>Información de Pago</h2>
-                <div className="payment-notice">
-                  <p>💳 Pago seguro con Stripe</p>
-                  <p className="text-muted">Ingresa los datos de tu tarjeta para completar el pago</p>
-                </div>
-                <div className="form-group">
-                  <label>Nombre en la tarjeta</label>
-                  <input
-                    type="text"
-                    className="input"
-                    required
-                    placeholder="Como aparece en la tarjeta"
-                    value={paymentData.name}
-                    onChange={(e) => setPaymentData({...paymentData, name: e.target.value})}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Número de tarjeta</label>
-                  <input
-                    type="text"
-                    className="input"
-                    required
-                    placeholder="4242 4242 4242 4242"
-                    maxLength={19}
-                    value={paymentData.cardNumber}
-                    onChange={(e) => setPaymentData({...paymentData, cardNumber: e.target.value})}
-                  />
-                </div>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label>Fecha de expiración</label>
+                <h2>Método de Pago</h2>
+                
+                <div className="payment-methods">
+                  <label className={`payment-option ${paymentMethod === 'stripe' ? 'selected' : ''}`}>
                     <input
-                      type="text"
-                      className="input"
-                      required
-                      placeholder="MM/YY"
-                      maxLength={5}
-                      value={paymentData.expiry}
-                      onChange={(e) => setPaymentData({...paymentData, expiry: e.target.value})}
+                      type="radio"
+                      name="paymentMethod"
+                      value="stripe"
+                      checked={paymentMethod === 'stripe'}
+                      onChange={() => setPaymentMethod('stripe')}
                     />
+                    <div className="payment-content">
+                      <span className="payment-icon">💳</span>
+                      <div>
+                        <strong>Tarjeta de Crédito/Débito</strong>
+                        <span className="payment-desc">Visa, Mastercard, American Express</span>
+                      </div>
+                    </div>
+                  </label>
+
+                  {country === 'CL' && (
+                    <label className={`payment-option ${paymentMethod === 'webpay' ? 'selected' : ''}`}>
+                      <input
+                        type="radio"
+                        name="paymentMethod"
+                        value="webpay"
+                        checked={paymentMethod === 'webpay'}
+                        onChange={() => setPaymentMethod('webpay')}
+                      />
+                      <div className="payment-content">
+                        <span className="payment-icon">🏦</span>
+                        <div>
+                          <strong>WebPay</strong>
+                          <span className="payment-desc">Paga con tu banco de forma segura</span>
+                        </div>
+                      </div>
+                    </label>
+                  )}
+                </div>
+
+                {paymentMethod === 'stripe' && (
+                  <div className="card-form">
+                    <div className="form-group">
+                      <label>Nombre en la tarjeta</label>
+                      <input
+                        type="text"
+                        className="input"
+                        required
+                        placeholder="Como aparece en la tarjeta"
+                        value={cardData.name}
+                        onChange={(e) => setCardData({...cardData, name: e.target.value})}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>Número de tarjeta</label>
+                      <input
+                        type="text"
+                        className="input"
+                        required
+                        placeholder="1234 5678 9012 3456"
+                        maxLength={19}
+                        value={cardData.cardNumber}
+                        onChange={(e) => setCardData({...cardData, cardNumber: e.target.value})}
+                      />
+                    </div>
+                    <div className="form-row">
+                      <div className="form-group">
+                        <label>Fecha de expiración</label>
+                        <input
+                          type="text"
+                          className="input"
+                          required
+                          placeholder="MM/AA"
+                          maxLength={5}
+                          value={cardData.expiry}
+                          onChange={(e) => setCardData({...cardData, expiry: e.target.value})}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>CVC</label>
+                        <input
+                          type="text"
+                          className="input"
+                          required
+                          placeholder="123"
+                          maxLength={4}
+                          value={cardData.cvc}
+                          onChange={(e) => setCardData({...cardData, cvc: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                    <div className="secure-badge">
+                      🔒 Pago seguro con encriptación SSL
+                    </div>
                   </div>
-                  <div className="form-group">
-                    <label>CVC</label>
-                    <input
-                      type="text"
-                      className="input"
-                      required
-                      placeholder="123"
-                      maxLength={4}
-                      value={paymentData.cvc}
-                      onChange={(e) => setPaymentData({...paymentData, cvc: e.target.value})}
-                    />
-                </div>
-                </div>
-                <div className="stripe-badge">
-                  🔒 Powered by Stripe
-                </div>
+                )}
+
+                {paymentMethod === 'webpay' && (
+                  <div className="webpay-info">
+                    <p>Serás redirigido a WebPay para completar tu pago de forma segura con tu banco.</p>
+                    <div className="webpay-banks">
+                      <span>🏦 Banco de Chile</span>
+                      <span>🏦 Scotiabank</span>
+                      <span>🏦 Banco Estado</span>
+                      <span>🏦 BCI</span>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -325,8 +450,8 @@ export default function Checkout() {
                   Volver
                 </button>
               )}
-              <button type="submit" className="btn btn-accent btn-block" disabled={processingPayment}>
-                {processingPayment ? 'Procesando...' : step === 'info' ? 'Continuar al Pago' : `Pagar $${finalTotal.toFixed(2)}`}
+              <button type="submit" className="btn btn-accent btn-block" disabled={loading}>
+                {loading ? 'Procesando...' : step === 'info' ? 'Continuar al Pago' : `Pagar ${formatPrice(finalTotal)}`}
               </button>
             </div>
           </form>
@@ -336,20 +461,20 @@ export default function Checkout() {
             {items.map((item) => (
               <div key={item.product.id} className="summary-item">
                 <span>{item.quantity}x {item.product.name}</span>
-                <span>${(item.product.price * item.quantity).toFixed(2)}</span>
+                <span>{formatPrice(item.product.price * item.quantity)}</span>
               </div>
             ))}
             <div className="summary-row">
               <span>Subtotal</span>
-              <span>${total.toFixed(2)}</span>
+              <span>{formatPrice(total)}</span>
             </div>
             <div className="summary-row">
               <span>Envío</span>
-              <span>{shippingCost === 0 ? 'Gratis' : `$${shippingCost.toFixed(2)}`}</span>
+              <span>{shippingCost === 0 ? 'Gratis' : formatPrice(shippingCost)}</span>
             </div>
             <div className="summary-total">
               <span>Total</span>
-              <span>${finalTotal.toFixed(2)}</span>
+              <span>{formatPrice(finalTotal)}</span>
             </div>
           </div>
         </div>
@@ -358,99 +483,51 @@ export default function Checkout() {
       <style jsx>{`
         .page { padding: 2rem 0; }
         h1 { margin-bottom: 2rem; }
-        .checkout-layout {
-          display: grid;
-          grid-template-columns: 1fr 350px;
-          gap: 2rem;
-        }
-        .form-section {
-          margin-bottom: 2rem;
-        }
-        .form-section h2 {
-          font-size: 1.25rem;
-          margin-bottom: 1rem;
-        }
-        .form-group {
-          margin-bottom: 1rem;
-        }
-        .form-group label {
-          display: block;
-          font-size: 0.875rem;
-          margin-bottom: 0.5rem;
-          font-weight: 500;
-        }
-        .form-row {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 1rem;
-        }
-        .payment-notice {
-          background: #f0f9ff;
-          border: 1px solid #bae6fd;
-          border-radius: 8px;
-          padding: 1rem;
-          margin-bottom: 1.5rem;
-        }
-        .payment-notice p:first-child {
-          font-weight: 600;
-          margin-bottom: 0.25rem;
-        }
-        .stripe-badge {
-          text-align: center;
-          color: #635bff;
-          font-size: 0.875rem;
-          margin-top: 1rem;
-        }
-        .form-actions {
-          display: flex;
-          gap: 1rem;
-        }
-        .form-actions .btn-block {
-          flex: 1;
-          padding: 1rem;
-          font-size: 1rem;
-        }
-        .order-summary {
-          background: var(--secondary);
-          padding: 1.5rem;
-          border-radius: 12px;
-          height: fit-content;
-        }
-        .order-summary h2 { margin-bottom: 1rem; }
-        .summary-item {
-          display: flex;
-          justify-content: space-between;
-          padding: 0.5rem 0;
-          border-bottom: 1px solid var(--border);
-        }
-        .summary-row {
-          display: flex;
-          justify-content: space-between;
-          padding: 0.5rem 0;
-        }
-        .summary-total {
-          display: flex;
-          justify-content: space-between;
-          padding-top: 1rem;
-          font-weight: 700;
-          font-size: 1.25rem;
-        }
-        .success-message {
-          text-align: center;
-          padding: 4rem 2rem;
-        }
-        .success-icon {
-          width: 80px;
-          height: 80px;
-          background: #22c55e;
-          color: white;
-          border-radius: 50%;
+        .checkout-layout { display: grid; grid-template-columns: 1fr 350px; gap: 2rem; }
+        .form-section { margin-bottom: 2rem; }
+        .form-section h2 { font-size: 1.25rem; margin-bottom: 1rem; }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { display: block; font-size: 0.875rem; margin-bottom: 0.5rem; font-weight: 500; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+        
+        .payment-methods { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; }
+        .payment-option {
           display: flex;
           align-items: center;
-          justify-content: center;
-          font-size: 40px;
-          margin: 0 auto 2rem;
+          padding: 1rem;
+          border: 2px solid var(--border);
+          border-radius: 8px;
+          cursor: pointer;
+          transition: all 0.2s;
         }
+        .payment-option:hover { border-color: var(--accent); }
+        .payment-option.selected { border-color: var(--accent); background: #f0f9ff; }
+        .payment-option input { display: none; }
+        .payment-content { display: flex; align-items: center; gap: 1rem; width: 100%; }
+        .payment-icon { font-size: 1.5rem; }
+        .payment-content div { flex: 1; }
+        .payment-content strong { display: block; }
+        .payment-desc { font-size: 0.875rem; color: var(--text-muted); }
+
+        .card-form { margin-top: 1.5rem; }
+        .secure-badge { text-align: center; color: var(--text-muted); font-size: 0.875rem; margin-top: 1rem; }
+
+        .webpay-info { text-align: center; padding: 2rem; background: #f0f9ff; border-radius: 8px; }
+        .webpay-banks { display: flex; justify-content: center; gap: 1rem; margin-top: 1rem; flex-wrap: wrap; }
+        .webpay-banks span { font-size: 0.875rem; color: var(--text-muted); }
+
+        .form-actions { display: flex; gap: 1rem; margin-top: 2rem; }
+        .form-actions .btn-block { flex: 1; padding: 1rem; font-size: 1rem; }
+
+        .order-summary { background: var(--secondary); padding: 1.5rem; border-radius: 12px; height: fit-content; }
+        .order-summary h2 { margin-bottom: 1rem; }
+        .summary-item { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+        .summary-row { display: flex; justify-content: space-between; padding: 0.5rem 0; }
+        .summary-total { display: flex; justify-content: space-between; padding-top: 1rem; font-weight: 700; font-size: 1.25rem; }
+
+        .success-message { text-align: center; padding: 4rem 2rem; }
+        .success-icon { width: 80px; height: 80px; background: #22c55e; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin: 0 auto 2rem; }
+
         @media (max-width: 768px) {
           .checkout-layout { grid-template-columns: 1fr; }
           .form-row { grid-template-columns: 1fr; }
