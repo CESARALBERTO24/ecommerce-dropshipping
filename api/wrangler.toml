@@ -1,0 +1,16 @@
+name = "ecommerce-dropshipping-api"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ecommerce-dropshipping"
+database_id = "8dacf71f-f4e8-4b72-8854-9a7593e7e5bb"
+
+[vars]
+SUPABASE_URL = "https://lbarjczdxinjiqifargo.supabase.co"
+SUPABASE_SERVICE_KEY = "your-service-role-key"
+ALIEXPRESS_API_KEY = ""
+ALIEXPRESS_API_SECRET = ""
+CJ_DROPSHIPPING_API_KEY = ""
+GLOBAL_DROPSHIPPING_API_KEY = ""
