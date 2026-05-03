@@ -48,13 +48,13 @@ CREATE TRIGGER update_clients_updated_at
     BEFORE UPDATE ON clients
     FOR EACH ROW EXecute FUNCTION update_updated_at();
 
--- Tabla de pedidos (se sincroniza con Cloudflare D1)
--- Los pedidos se crean en el checkout y se guardan tanto en Supabase como en Cloudflare D1
+-- Tabla de pedidos (se guarda en Supabase)
+-- Los pedidos se crean en el checkout y se guardan en Supabase
 CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     order_number TEXT UNIQUE NOT NULL,
     client_id UUID REFERENCES clients(id),
-    supplier_id TEXT,
+    supplier_id TEXT REFERENCES suppliers(id),
     status TEXT DEFAULT 'pending',
     items JSONB NOT NULL,
     subtotal NUMERIC(10, 2) NOT NULL,

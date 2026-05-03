@@ -32,7 +32,6 @@ interface Supplier {
   webhook_url: string | null;
   commission_percent: number;
   is_active: boolean;
-  created_at: string;
 }
 
 function generateUUID(): string {
@@ -49,6 +48,25 @@ function corsHeaders() {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   };
+}
+
+async function supabaseFetch(env: Env, endpoint: string, options: RequestInit = {}): Promise<any> {
+  const response = await fetch(`${env.SUPABASE_URL}/rest/v1/${endpoint}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': env.SUPABASE_SERVICE_KEY,
+      'Authorization': `Bearer ${env.SUPABASE_SERVICE_KEY}`,
+      ...options.headers,
+    },
+  });
+  
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Supabase error: ${error}`);
+  }
+  
+  return response.json();
 }
 
 async function handleRequest(request: Request, env: Env): Promise<Response> {
@@ -87,6 +105,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   }
 }
 
+// ============ PRODUCTS (D1) ============
+
 async function handleProducts(request: Request, env: Env, path: string): Promise<Response> {
   const method = request.method;
   const id = path.split('/').pop();
@@ -106,7 +126,7 @@ async function handleProducts(request: Request, env: Env, path: string): Promise
     const limit = url.searchParams.get('limit') || '50';
     const offset = url.searchParams.get('offset') || '0';
 
-    let query = 'SELECT * FROM products WHERE is_active = true';
+    let query = 'SELECT * FROM products WHERE is_active = 1';
     const params: any[] = [];
 
     if (category) {
@@ -143,7 +163,7 @@ async function handleProducts(request: Request, env: Env, path: string): Promise
       body.cost_price || null,
       JSON.stringify(body.images || []),
       body.category || null,
-      body.is_active !== false,
+      body.is_active !== false ? 1 : 0,
       now,
       now
     ).run();
@@ -178,7 +198,7 @@ async function handleProducts(request: Request, env: Env, path: string): Promise
       body.cost_price,
       body.images ? JSON.stringify(body.images) : null,
       body.category,
-      body.is_active,
+      body.is_active !== undefined ? (body.is_active ? 1 : 0) : null,
       now,
       id
     ).run();
@@ -188,32 +208,41 @@ async function handleProducts(request: Request, env: Env, path: string): Promise
   }
 
   if (method === 'DELETE' && id) {
-    await env.DB.prepare('UPDATE products SET is_active = false WHERE id = ?').bind(id).run();
+    await env.DB.prepare('UPDATE products SET is_active = 0 WHERE id = ?').bind(id).run();
     return new Response(JSON.stringify({ success: true }), { headers: corsHeaders() });
   }
 
   return new Response('Method not allowed', { status: 405, headers: corsHeaders() });
 }
 
+// ============ SUPPLIERS (Supabase) ============
+
 async function handleSuppliers(request: Request, env: Env, path: string): Promise<Response> {
   const method = request.method;
   const id = path.split('/').pop();
 
   if (method === 'GET') {
-    if (id && id !== 'suppliers') {
-      const result = await env.DB.prepare('SELECT * FROM suppliers WHERE id = ?').bind(id).first<Supplier>();
-      if (!result) {
-        return new Response(JSON.stringify({ error: 'Supplier not found' }), { status: 404, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+    try {
+      if (id && id !== 'suppliers') {
+        const result = await supabaseFetch(env, `suppliers?id=eq.${id}&select=*`);
+        if (!result || result.length === 0) {
+          return new Response(JSON.stringify({ error: 'Supplier not found' }), { status: 404, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify(result[0]), { headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
       }
-      return new Response(JSON.stringify(result), { headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
-    }
 
-    const result = await env.DB.prepare('SELECT * FROM suppliers WHERE is_active = true').all();
-    return new Response(JSON.stringify(result.results), { headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+      const result = await supabaseFetch(env, 'suppliers?select=*&is_active=eq.true');
+      return new Response(JSON.stringify(result), { headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+    } catch (error) {
+      console.error('Supabase suppliers error:', error);
+      return new Response(JSON.stringify({ error: 'Failed to fetch suppliers' }), { status: 500, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+    }
   }
 
   return new Response('Method not allowed', { status: 405, headers: corsHeaders() });
 }
+
+// ============ DROPSHIP SYNC ============
 
 async function handleDropshipSync(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
@@ -227,9 +256,15 @@ async function handleDropshipSync(request: Request, env: Env): Promise<Response>
     return new Response(JSON.stringify({ error: 'supplier_id is required' }), { status: 400, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
   }
 
-  const supplier = await env.DB.prepare('SELECT * FROM suppliers WHERE id = ?').bind(supplier_id).first<Supplier>();
-  if (!supplier) {
-    return new Response(JSON.stringify({ error: 'Supplier not found' }), { status: 404, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+  let supplier: Supplier;
+  try {
+    const result = await supabaseFetch(env, `suppliers?id=eq.${supplier_id}&select=*`);
+    if (!result || result.length === 0) {
+      return new Response(JSON.stringify({ error: 'Supplier not found' }), { status: 404, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+    }
+    supplier = result[0];
+  } catch (error) {
+    return new Response(JSON.stringify({ error: 'Failed to fetch supplier from Supabase' }), { status: 500, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
   }
 
   let products: any[] = [];
@@ -268,7 +303,7 @@ async function handleDropshipSync(request: Request, env: Env): Promise<Response>
       await env.DB.prepare(`
         INSERT INTO products (id, external_id, supplier_id, name, description, price, cost_price, images, category, is_active, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(id, product.external_id, supplier_id, product.name, product.description, product.price, product.cost_price, JSON.stringify(product.images), product.category, true, now, now).run();
+      `).bind(id, product.external_id, supplier_id, product.name, product.description, product.price, product.cost_price, JSON.stringify(product.images), product.category, 1, now, now).run();
       newCount++;
     }
   }
@@ -378,6 +413,8 @@ async function syncGlobalDropshipping(env: Env, supplier: Supplier): Promise<any
   return [];
 }
 
+// ============ CREATE ORDER (Supabase) ============
+
 async function handleDropshipCreateOrder(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response('Method not allowed', { status: 405, headers: corsHeaders() });
@@ -390,52 +427,59 @@ async function handleDropshipCreateOrder(request: Request, env: Env): Promise<Re
     return new Response(JSON.stringify({ error: 'order_id is required' }), { status: 400, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
   }
 
-  const order = await env.DB.prepare(`
-    SELECT o.*, s.name as supplier_name, s.slug as supplier_slug, s.api_key as supplier_api_key
-    FROM orders o
-    JOIN suppliers s ON o.supplier_id = s.id
-    WHERE o.id = ?
-  `).bind(order_id).first<any>();
-
-  if (!order) {
-    return new Response(JSON.stringify({ error: 'Order not found' }), { status: 404, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+  let order: any;
+  try {
+    const result = await supabaseFetch(env, `orders?id=eq.${order_id}&select=*,suppliers(name,slug,api_key)`);
+    if (!result || result.length === 0) {
+      return new Response(JSON.stringify({ error: 'Order not found' }), { status: 404, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+    }
+    order = result[0];
+  } catch (error) {
+    return new Response(JSON.stringify({ error: 'Failed to fetch order from Supabase' }), { status: 500, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
   }
 
   if (order.supplier_order_id) {
     return new Response(JSON.stringify({ error: 'Order already sent to supplier' }), { status: 400, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
   }
 
-  const items = typeof order.items === 'string' ? JSON.parse(order.items) : order.items;
-  const shippingAddress = typeof order.shipping_address === 'string' ? JSON.parse(order.shipping_address) : order.shipping_address;
+  const supplier = order.suppliers;
+  const supplierSlug = supplier?.slug || '';
+  const supplierApiKey = supplier?.api_key || '';
 
   let supplierOrderId = '';
-  let supplierStatus = 'pending';
+  let supplierStatus = 'processing';
 
-  switch (order.supplier_slug) {
+  switch (supplierSlug) {
     case 'aliexpress':
-      if (!env.ALIEXPRESS_API_KEY) {
+      if (!env.ALIEXPRESS_API_KEY && !supplierApiKey) {
         supplierOrderId = `AE-${Date.now()}`;
-        supplierStatus = 'processing';
       }
       break;
     case 'cjdropshipping':
-      if (!env.CJ_DROPSHIPPING_API_KEY) {
+      if (!env.CJ_DROPSHIPPING_API_KEY && !supplierApiKey) {
         supplierOrderId = `CJ-${Date.now()}`;
-        supplierStatus = 'processing';
       }
       break;
     case 'globaldropshipping':
-      if (!env.GLOBAL_DROPSHIPPING_API_KEY) {
+      if (!env.GLOBAL_DROPSHIPPING_API_KEY && !supplierApiKey) {
         supplierOrderId = `GD-${Date.now()}`;
-        supplierStatus = 'processing';
       }
       break;
   }
 
-  await env.DB.prepare(`
-    UPDATE orders SET supplier_order_id = ?, supplier_status = ?, status = ?, updated_at = ?
-    WHERE id = ?
-  `).bind(supplierOrderId, supplierStatus, 'processing', new Date().toISOString(), order_id).run();
+  try {
+    await supabaseFetch(env, `orders?id=eq.${order_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        supplier_order_id: supplierOrderId,
+        supplier_status: supplierStatus,
+        status: 'processing',
+        updated_at: new Date().toISOString(),
+      }),
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: 'Failed to update order in Supabase' }), { status: 500, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+  }
 
   return new Response(JSON.stringify({
     success: true,
@@ -443,6 +487,8 @@ async function handleDropshipCreateOrder(request: Request, env: Env): Promise<Re
     status: supplierStatus,
   }), { headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
 }
+
+// ============ WEBHOOK (Supabase) ============
 
 async function handleDropshipWebhook(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
@@ -467,10 +513,19 @@ async function handleDropshipWebhook(request: Request, env: Env): Promise<Respon
 
   const mappedStatus = statusMap[status] || 'pending';
 
-  await env.DB.prepare(`
-    UPDATE orders SET supplier_status = ?, status = ?, tracking_number = COALESCE(?, tracking_number), updated_at = ?
-    WHERE supplier_order_id = ?
-  `).bind(status, mappedStatus, tracking_number || null, new Date().toISOString(), supplier_order_id).run();
+  try {
+    await supabaseFetch(env, `orders?supplier_order_id=eq.${supplier_order_id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        supplier_status: status,
+        status: mappedStatus,
+        tracking_number: tracking_number || null,
+        updated_at: new Date().toISOString(),
+      }),
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ error: 'Failed to update order in Supabase' }), { status: 500, headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
+  }
 
   return new Response(JSON.stringify({ success: true, message: 'Webhook processed' }), { headers: { ...corsHeaders(), 'Content-Type': 'application/json' } });
 }
